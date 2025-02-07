@@ -40,7 +40,7 @@ def create_room_impulse_response(
         plot_mic_index: int = 0, plot_rir: bool = True):
     h_reverberation = generate_rir(room_dimensions, mic_positions, fs, reverb_time, source_position)
     if plot_rir:
-        print(f'h_reverberation shape = {h_reverberation.shape}')
+        # print(f'h_reverberation shape = {h_reverberation.shape}')
         display_rir_time_domain(fs, f'Room Impulse Response (first mic). Reverberation Time: {reverb_time} sec',
                                 h_reverberation, plot_mic_index=plot_mic_index)
     return h_reverberation
@@ -121,9 +121,9 @@ def prox_gain_parameter_real(v):
 def prox_quadratic_kkt_inverse(reflect_k_1_f, kkt_inv, rho, d=1):
     n_mics = reflect_k_1_f.shape[0]
 
-    rhs = np.concatenate([reflect_k_1_f, np.array([d])])
+    rhs = np.concatenate([rho * reflect_k_1_f, np.array([d])])
     solution = kkt_inv @ rhs
-    solution = solution / rho
+    solution = solution
     x_f = solution[:n_mics]
     return x_f
 
@@ -159,13 +159,16 @@ def prop_relax(x_t, a_f,
     zeta_k_1 = np.zeros_like(v)
 
     # For Causal MPDR beamformer, ni_f <-- 0 instead of prox(z_f)
-    K = 10 ** 5
+    K = 10 ** 3
+    print(f">>> K: {K}")
     theta_k_1 = np.zeros_like(v[:n_mics, :])
     ni_k_1 = np.zeros_like(v[n_mics, :]).reshape(1, -1)
 
     # precompute KKT inverse
     kkt_inv = compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho, x_n_f)
     for k in range(K):
+        if k % 1000 == 0:
+            print(k)
         # apply the proximity operator for L1 constrain (sparsity) to each frequency bin
         for m in range(n_mics):
             theta_k_1[m, :] = prox_spatial_filter_complex(v[m, :], n_freq_bins, delta)
@@ -212,7 +215,7 @@ def compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho,
         cov_x_f = (cur_xi_n_f @ cur_xi_n_f.conj().T) / n_time_frames
         extended_scm += [cov_x_f]
     extended_scm = np.stack(extended_scm)
-    alpha_f = np.zeros((a_f.shape[1] + 1, a_f.shape[0]), dtype=np.complex128) + 1
+    alpha_f = np.zeros((a_f.shape[1] + 1, a_f.shape[0]), dtype=np.complex128) - 1
     alpha_f[:n_mics, :] = a_f.T  # we extend the RTF of the target signal
     kkt_inv = precompute_kkt_inverse(extended_scm, alpha_f, rho)
     return kkt_inv
@@ -222,7 +225,7 @@ def main():
     # We concatenate the files to 10s audio files and printing the waveform and the STFT
     interference_signal, source_signal = load_target_and_interference_signals()
 
-    cur_win_length, cur_nfft, cur_hop_length = WIN_LENGTH_LIST[0], N_FFT_LIST[0], HOP_LENGTH_LIST[0]
+    cur_win_length, cur_nfft, cur_hop_length = WIN_LENGTH_LIST[2], N_FFT_LIST[2], HOP_LENGTH_LIST[2]
     print(f'>>>>>>>>> cur_win_length={cur_win_length}')
     print(f'>>>>>>>>> cur_nfft={cur_nfft}')
     print(f'>>>>>>>>> cur_hop_length={cur_hop_length}')
@@ -231,9 +234,10 @@ def main():
     display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
                               hop_length=cur_hop_length,
                               n_fft=cur_nfft)
+    plt.show()
     # Create sampled data
     t_60 = np.random.uniform(T_60_RANGE[0], T_60_RANGE[1])
-    print(f"T_60: {t_60}[s]")
+    print(f">>> Randomized T_60: {t_60}[s]")
     h_source = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION)
     x_t_clean = ss.convolve(h_source, source_signal[:, None])
     display_audio_time_domain(x_t_clean[:, 0], FS, title='clean target signal - Reference Mic')
@@ -241,6 +245,8 @@ def main():
     h_interference = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION)
     u_t = ss.convolve(h_interference, interference_signal[:, None])
     x_t = x_t_clean + u_t
+    # x_t = x_t_clean
+    save_audio_signals(FS, source_signal, 'source_signal.wav')
     save_audio_signals(FS, x_t_clean, 'clean_signal.wav')
     save_audio_signals(FS, x_t, 'noisy_signal.wav')
 
@@ -248,7 +254,9 @@ def main():
 
     # Through our experiments, we set the initial value of phi_f to zero,
     lmbda = 1.8
+    print(f">>> lmbda: {lmbda}")
     rho = 0.005
+    print(f">>> rho: {rho}")
     n_freq_bins, n_mics = a_f.shape
     v_init = np.zeros((n_mics + 1, n_freq_bins), dtype=np.complex128)
     w_f_prop_relax, x_n_f = prop_relax(x_t, a_f, FS,
@@ -258,9 +266,9 @@ def main():
                                        v=v_init, rho=rho, lmbda=lmbda)
     y_stft = np.zeros((n_freq_bins, x_n_f.shape[2]), dtype=np.complex128)
     for m in range(n_mics):
-        y_stft += w_f_prop_relax[m, :, None]*x_n_f[m]
-    y_out = librosa.istft(y_stft, win_length=cur_win_length, hop_length=cur_hop_length,n_fft=cur_nfft)
-    save_audio_signals(FS, y_out, 'out_signal.wav')
+        y_stft += w_f_prop_relax[m, :, None] * x_n_f[m]
+    y_out = librosa.istft(y_stft, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
+    save_audio_signals(FS, y_out, 'out_signal_without_noise.wav')
 
     print('here')
 
