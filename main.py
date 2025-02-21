@@ -1,13 +1,12 @@
 import librosa
-import pyroomacoustics as pra
 import rir_generator as rir
 import matplotlib.pyplot as plt
-import os
 import scipy.signal as ss
 from params import *
 from display_funcs import display_audio_spectrogram, display_audio_time_domain, display_rir_time_domain
 from scipy.linalg import eigh
 import soundfile as sf
+import glob
 
 
 def apply_stft(y, sr, win_length, hop_length, n_fft=None):
@@ -61,14 +60,24 @@ def generate_rir(room_dimensions, mic_positions, fs, reverb_time, source_positio
     return h
 
 
-def read_wav_files_from_folder(folder_path):
-    files = []
-    for filename in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, filename)
-        if os.path.isfile(file_path):
-            signal, _ = load_input_signal(file_path, plot_signal=False)
-            files.append(signal)
-    return files
+def read_wav_files_from_folder(num_samples):
+    dir_path = 'dataset'
+    speakers_dirs = glob.glob(dir_path + '/*/*/')
+    num_speakers = len(speakers_dirs)
+    test_audio_files = np.random.randint(num_speakers, size=(10, 2))
+    all_records = []
+    for test_ind in range(test_audio_files.shape[0]):
+        cur_target_path = speakers_dirs[test_audio_files[test_ind, 0]]
+        cur_target_record_start = test_audio_files[test_ind, 1]
+        files = glob.glob(cur_target_path + '*.wav')[cur_target_record_start:]
+        target_record = []
+        for filename in files:
+            signal, _ = load_input_signal(filename, plot_signal=False)
+            target_record.append(signal)
+        target_record = np.concatenate(target_record)
+        target_record = target_record[:num_samples]
+        all_records.append(target_record)
+    return all_records
 
 
 def compute_rtf_target(s_t, fs, win_length, hop_length, n_fft):
@@ -87,7 +96,7 @@ def compute_rtf_target(s_t, fs, win_length, hop_length, n_fft):
     n_freq_bins, n_time_frames = s_stft_m.shape
     print(f'n_freq_bins={n_freq_bins}, n_time_frames={n_time_frames}')
     rtf_f = []
-    # cov_x_all = []
+
     for f in range(n_freq_bins):
         cur_s_n_f = s_n_f[:, f, :]
         cov_x_f = (cur_s_n_f @ cur_s_n_f.conj().T) / n_time_frames
@@ -95,9 +104,8 @@ def compute_rtf_target(s_t, fs, win_length, hop_length, n_fft):
         largest_eigenvec = eigvecs[:, -1]
         cur_rtf_f = largest_eigenvec / largest_eigenvec[0]
         rtf_f += [cur_rtf_f]
-        # cov_x_all += [cov_x_f]
+
     rtf_f = np.stack(rtf_f)
-    # cov_x_all = np.stack(cov_x_all)
     return rtf_f
 
 
@@ -245,62 +253,66 @@ def compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho,
 
 def main():
     # We concatenate the files to 10s audio files and printing the waveform and the STFT
-    interference_signal, source_signal = load_target_and_interference_signals()
+    target_interference = load_target_and_interference_signals()
+    for test_ind in range(len(target_interference)):
+        cur_win_length, cur_nfft, cur_hop_length = WIN_LENGTH_LIST[2], N_FFT_LIST[2], HOP_LENGTH_LIST[2]
+        print(f'>>>>>>>>> cur_win_length={cur_win_length}')
+        print(f'>>>>>>>>> cur_nfft={cur_nfft}')
+        print(f'>>>>>>>>> cur_hop_length={cur_hop_length}')
 
-    cur_win_length, cur_nfft, cur_hop_length = WIN_LENGTH_LIST[2], N_FFT_LIST[2], HOP_LENGTH_LIST[2]
-    print(f'>>>>>>>>> cur_win_length={cur_win_length}')
-    print(f'>>>>>>>>> cur_nfft={cur_nfft}')
-    print(f'>>>>>>>>> cur_hop_length={cur_hop_length}')
+        source_signal = target_interference[test_ind][0]
+        interference_signal = target_interference[test_ind][1]
+        # display_audio_time_domain(source_signal, FS,
+        #                           title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}')
+        # display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
+        #                           hop_length=cur_hop_length,
+        #                           title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}',
+        #                           n_fft=cur_nfft)
+        # plt.show()
+        # Create sampled data
+        t_60 = np.random.uniform(T_60_RANGE[0], T_60_RANGE[1])
+        print(f">>> Randomized T_60: {t_60}[s]")
+        h_source = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION,
+                                                plot_rir=False)
+        x_t_clean = ss.convolve(h_source, source_signal[:, None])
+        # display_audio_time_domain(x_t_clean[:, REF_MIC_INDEX], FS, title='clean target signal - Reference Mic')
+        # plt.show()
+        h_interference = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION,
+                                                      plot_rir=True)
+        # plt.show()
+        u_t = ss.convolve(h_interference, interference_signal[:, None])
+        x_t = x_t_clean + u_t
+        # save_audio_signals(FS, source_signal, f'source_signal_{test_ind}.wav')
+        save_audio_signals(FS, x_t_clean, f'clean_signal_{test_ind}.wav')
+        save_audio_signals(FS, x_t, f'noisy_signal_{test_ind}.wav')
 
-    display_audio_time_domain(source_signal, FS,
-                              title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}')
-    display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
-                              hop_length=cur_hop_length,
-                              title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}',
-                              n_fft=cur_nfft)
-    plt.show()
-    # Create sampled data
-    t_60 = np.random.uniform(T_60_RANGE[0], T_60_RANGE[1])
-    print(f">>> Randomized T_60: {t_60}[s]")
-    h_source = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION)
-    x_t_clean = ss.convolve(h_source, source_signal[:, None])
-    display_audio_time_domain(x_t_clean[:, REF_MIC_INDEX], FS, title='clean target signal - Reference Mic')
-    plt.show()
-    h_interference = create_room_impulse_response(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION,
-                                                  plot_rir=True)
-    plt.show()
-    u_t = ss.convolve(h_interference, interference_signal[:, None])
-    x_t = x_t_clean + u_t
-    save_audio_signals(FS, source_signal, 'source_signal.wav')
-    save_audio_signals(FS, x_t_clean, 'clean_signal.wav')
-    save_audio_signals(FS, x_t, 'noisy_signal.wav')
+        a_f = compute_rtf_target(x_t_clean, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
 
-    a_f = compute_rtf_target(x_t_clean, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
+        # Through our experiments, we set the initial value of phi_f to zero,
+        lmbda = 1.8
+        print(f">>> lmbda: {lmbda}")
+        rho = 0.005
+        print(f">>> rho: {rho}")
+        n_freq_bins, n_mics = a_f.shape
+        F = 2 * (n_freq_bins - 1)
+        v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
+        w_f_prop_relax = prop_relax(x_t, a_f, FS,
+                                    win_length=cur_win_length,
+                                    hop_length=cur_hop_length,
+                                    n_fft=cur_nfft,
+                                    v=v_init, rho=rho, lmbda=lmbda)
+        L, n_mics = x_t.shape
+        y_out = np.zeros(L, dtype=np.complex128)
+        n_range = np.arange(-F // 2, F // 2)
+        w_inds = np.where(n_range >= 0, n_range, n_range + F)
+        x_inds = np.arange(L)[:, None] - n_range
+        x_t_padded = np.zeros((L + 2 * F, n_mics), dtype=np.complex128)
+        x_t_padded[F:L + F, :] = x_t
+        x_inds_padded = x_inds + F
 
-    # Through our experiments, we set the initial value of phi_f to zero,
-    lmbda = 1.8
-    print(f">>> lmbda: {lmbda}")
-    rho = 0.005
-    print(f">>> rho: {rho}")
-    n_freq_bins, n_mics = a_f.shape
-    F = 2 * (n_freq_bins - 1)
-    v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-    w_f_prop_relax = prop_relax(x_t, a_f, FS,
-                                win_length=cur_win_length,
-                                hop_length=cur_hop_length,
-                                n_fft=cur_nfft,
-                                v=v_init, rho=rho, lmbda=lmbda)
-    L, n_mics = x_t.shape
-    y_out = np.zeros(L, dtype=np.complex128)
-    n_range = np.arange(-F // 2, F // 2)
-    w_inds = np.where(n_range >= 0, n_range, n_range + F)
-    x_inds = np.arange(L)[:, None] - n_range
-    x_t_padded = np.zeros((L+2*F, n_mics), dtype=np.complex128)
-    x_t_padded[F:L+F, :] = x_t
-    x_inds_padded = x_inds + F
-
-    for m in range(n_mics):
-        y_out += np.sum(w_f_prop_relax[m, w_inds] * x_t_padded[x_inds_padded, m], axis=1)
+        for m in range(n_mics):
+            y_out += np.sum(w_f_prop_relax[m, w_inds] * x_t_padded[x_inds_padded, m], axis=1)
+        save_audio_signals(FS, np.array([y_out.real, y_out.imag]).T, f'out_signal_{test_ind}.wav')
 
     # y_out = np.zeros_like(x_t[:, 0], dtype=np.complex128)
     # for l in range(x_t.shape[0]):
@@ -319,19 +331,13 @@ def main():
     # for m in range(n_mics):
     #    y_stft += w_f_prop_relax[m, :, None] * x_n_f[m]
     # y_out = librosa.istft(y_stft, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
-    save_audio_signals(FS, np.array([y_out.real, y_out.imag]).T, 'out_signal.wav')
-
-    print('here')
 
 
 def load_target_and_interference_signals():
-    input_source_signals = read_wav_files_from_folder(TARGET_FOLDER_PATH)
-    source_signal = np.concatenate(input_source_signals)
-    source_signal = source_signal[:RECORDING_TIME * FS]
-    input_interference_signals = read_wav_files_from_folder(INTERFERENCE_FOLDER_PATH)
-    interference_signal = np.concatenate(input_interference_signals)
-    interference_signal = interference_signal[:RECORDING_TIME * FS]
-    return interference_signal, source_signal
+    source_signal = read_wav_files_from_folder(RECORDING_TIME * FS)
+    interference_signal = read_wav_files_from_folder(RECORDING_TIME * FS)
+    combined_speakers = [[source_signal[i], interference_signal[i]] for i in range(len(source_signal))]
+    return combined_speakers
 
 
 if __name__ == '__main__':
