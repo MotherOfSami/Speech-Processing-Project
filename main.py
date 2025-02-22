@@ -224,7 +224,7 @@ def prop_relax_online(x_t, a_f,
     v_t_list = []
     scm_mat = np.zeros((n_fft, n_mics + 1, n_mics + 1))
     # precompute KKT inverse
-    for t in range(3):
+    for t in range(n_time_frames):
         print(t)
         for k in range(K):
             # apply the proximity operator for L1 constrain (sparsity) to each frequency bin
@@ -252,11 +252,13 @@ def prop_relax_online(x_t, a_f,
         v_t_list += [v]
     # w_f, z_f = v[:n_mics, :], v[n_mics, :]
     v_t = np.stack(v_t_list)
-    res = []
+    v_t_causal = prox_spatial_filter_complex(v_t.T, delta)
+
+    y_n_f = np.zeros((n_fft, n_time_frames), dtype=np.complex128)
     for m in range(n_mics):
-        cur_theta = prox_spatial_filter_complex(v_t[:, m, :].T, delta)
-        res += [np.fft.ifft(cur_theta.conj().T)]
-    w_f = np.stack(res)
+        full_x_n_f = reconstruct_full_spectrum(x_n_f[m, :])
+        y_n_f += v_t_causal[:, m, :].conj() * full_x_n_f
+
     return w_f
 
 
@@ -290,7 +292,7 @@ def reconstruct_full_scm(scm_half):
     return scm_full
 
 
-def compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho, x_n_f, prev_scm=None, beta=0):
+def compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho, x_n_f, prev_scm=None, beta=0.0):
     xi_t_f = np.zeros((x_n_f.shape[0] + 1, x_n_f.shape[1], x_n_f.shape[2]), dtype=np.complex128)
     xi_t_f[:n_mics, :, :] = x_n_f  # we extend the STFT of the observed signal
     extended_scm = []
@@ -311,7 +313,7 @@ def compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho,
     return kkt_inv, scm_full
 
 
-def calc_filtered_signal(w: np.ndarray, sig: np.ndarray):
+def calc_filtered_signal(w: np.ndarray, sig: np.ndarray) -> np.ndarray:
     num_of_samples, num_of_mics = sig.shape
     res = np.zeros(num_of_samples, dtype=np.complex128)
     sig = sig.astype(np.complex128)
@@ -329,8 +331,8 @@ def main():
         print(f'>>>>>>>>> cur_nfft={cur_nfft}')
         print(f'>>>>>>>>> cur_hop_length={cur_hop_length}')
 
-        source_signal = target_interference[test_ind][0]
-        interference_signal = target_interference[test_ind][1]
+        source_signal = target_interference[test_ind][0][:FS*3]
+        interference_signal = target_interference[test_ind][1][:FS*3]
         # display_audio_time_domain(source_signal, FS,
         #                           title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}')
         # display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
@@ -365,17 +367,17 @@ def main():
         n_freq_bins, n_mics = a_f.shape
         F = 2 * (n_freq_bins - 1)
         v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-        # w_f_prop_relax = prop_relax_online(x_t, a_f, FS,
-        #                                    win_length=cur_win_length,
-        #                                    hop_length=cur_hop_length,
-        #                                    n_fft=cur_nfft,
-        #                                    v=v_init, rho=rho, lmbda=lmbda, beta=0.7)
+        w_f_prop_relax = prop_relax_online(x_t, a_f, FS,
+                                           win_length=cur_win_length,
+                                           hop_length=cur_hop_length,
+                                           n_fft=cur_nfft,
+                                           v=v_init, rho=rho, lmbda=lmbda, beta=0.7)
 
-        w_f_prop_relax = prop_relax(x_t, a_f, FS,
-                                    win_length=cur_win_length,
-                                    hop_length=cur_hop_length,
-                                    n_fft=cur_nfft,
-                                    v=v_init, rho=rho, lmbda=lmbda)
+        # w_f_prop_relax = prop_relax(x_t, a_f, FS,
+        #                             win_length=cur_win_length,
+        #                             hop_length=cur_hop_length,
+        #                             n_fft=cur_nfft,
+        #                             v=v_init, rho=rho, lmbda=lmbda)
         y_out = calc_filtered_signal(w_f_prop_relax, x_t)
         save_audio_signals(FS, np.array([y_out.real, y_out.imag]).T, f'out_signal_{test_ind}.wav')
 
