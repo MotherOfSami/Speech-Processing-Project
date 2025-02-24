@@ -11,7 +11,7 @@ from display_funcs import display_audio_spectrogram, display_audio_time_domain, 
 from scipy.linalg import eigh
 import soundfile as sf
 import glob
-from scores_utils import evaluate_pesq_score, evaluate_estoi_score
+from scores_utils import evaluate_pesq_score, evaluate_estoi_score, evaluate_si_sdr_score
 
 
 def apply_stft(y, sr, win_length, hop_length, n_fft=None):
@@ -204,7 +204,14 @@ def prop_relax(x_t, a_f,
         cur_theta = prox_spatial_filter_complex(v[m, :], delta)
         res += [np.fft.ifft(cur_theta.conj().T)]
     w_f = np.stack(res)
-    return w_f
+
+    w_f_time_freq = np.zeros_like(v[:n_mics, :])
+    for m in range(n_mics):
+        w_f_time_freq[m, :] = prox_spatial_filter_complex(v[m, :], delta)
+    z_f = np.zeros_like(v[n_mics, :], dtype='float64')
+    for f in range(n_fft):
+        z_f[f] = prox_gain_parameter_real(v[n_mics, f])
+    return w_f, w_f_time_freq, z_f
 
 
 def prop_relax_online(x_t, a_f,
@@ -361,8 +368,8 @@ def main():
                 print(f">>> lmbda: {lmbda}")
                 rho = 0.005
                 print(f">>> rho: {rho}")
-                score_pesq, score_estoi = run_prop_relax(
-                    a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, k_iters)
+                score_pesq, score_estoi, score_si_sdr, score_dr = run_prop_relax(
+                    a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean, k_iters)
 
                 cur_stat = pd.DataFrame({
                     'param_ind': [param_ind],
@@ -372,7 +379,10 @@ def main():
                     'k_iters': [k_iters],
                     'test_ind': [test_ind],
                     'score_pesq': [score_pesq],
-                    'score_estoi': [score_estoi]
+                    'score_estoi': [score_estoi],
+                    'score_si_sdr': [score_si_sdr],
+                    'score_dr': [score_dr]
+
                 })
                 file_exists = os.path.exists(filename)
                 cur_stat.to_csv(filename, mode="a", header=not file_exists, index=False)
@@ -393,7 +403,7 @@ def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x
 
 def add_noise(interference_signal, t_60, x_t_clean):
     h_interference = create_room_impulse_response(
-        ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION, plot_rir=True)
+        ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION, plot_rir=False)
     u_t = ss.convolve(h_interference, interference_signal[:, None])
     x_t = x_t_clean + u_t
     return x_t
@@ -410,18 +420,33 @@ def display_time_frequency_signal():
     # plt.show()
 
 
-def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, k_iters: int = 10 ** 3):
+def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t,x_t_clean,
+                   k_iters: int = 10 ** 3):
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
     v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-    w_f_prop_relax = prop_relax(
+    w_f_prop_relax, w_f_time_freq, z_f = prop_relax(
         x_t, a_f, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft,
         v=v_init, rho=rho, lmbda=lmbda, K=k_iters)
     y_out = calc_filtered_signal(w_f_prop_relax, x_t)
-    score_pesq = evaluate_pesq_score(FS, x_t[:, REF_MIC_INDEX], y_out)
-    score_estoi = evaluate_estoi_score(FS, x_t[:, REF_MIC_INDEX], y_out)
-    # save_audio_signals(FS, np.array([y_out.real, y_out.imag]).T, f'prop_relax_out_signal_{test_ind}.wav')
-    return score_pesq, score_estoi
+    y_out = np.concatenate([np.zeros(F // 2 - 1), y_out[:-F // 2 + 1].real])
+
+    score_pesq = evaluate_pesq_score(FS, x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_estoi = evaluate_estoi_score(FS, x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_si_sdr = evaluate_si_sdr_score(x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_dr = evaluate_distortion_ratio(F, a_f, w_f_time_freq)
+
+    # save_audio_signals(FS, y_out, f'prop_relax_out_signal_{test_ind}.wav')
+    return score_pesq, score_estoi, score_si_sdr, score_dr
+
+
+def evaluate_distortion_ratio(F, a_f, w_f_time_freq):
+    a_f_full = reconstruct_full_spectrum(a_f)
+
+    distortion_val = abs(1-(np.diag(a_f_full.conj()@w_f_time_freq))) ** 2
+    dr = 10 * np.log10(F / np.sum(distortion_val))
+    return dr
+
 
     # L, n_mics = x_t.shape
     # y_out = np.zeros(L, dtype=np.complex128)
