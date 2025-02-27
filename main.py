@@ -13,6 +13,7 @@ from scores_utils import evaluate_pesq_score, evaluate_estoi_score, evaluate_si_
 from prop_algs import prop_relax, prop_exact
 from figs_creation import create_fig5, create_fig6
 from scipy.signal import convolve
+from localization_utils import initialize_with_steering_vec
 
 
 def apply_stft(y, sr, win_length, hop_length, n_fft=None):
@@ -70,7 +71,7 @@ def read_wav_files_from_folder(num_samples):
     dir_path = 'dataset'
     speakers_dirs = glob.glob(dir_path + '/*/*/')
     num_speakers = len(speakers_dirs)
-    test_audio_files = np.random.randint(num_speakers, size=(10, 2))
+    test_audio_files = np.random.randint(num_speakers, size=(NUM_AUDIO_MIXTURES, 2))
     all_records = []
     for test_ind in range(test_audio_files.shape[0]):
         cur_target_path = speakers_dirs[test_audio_files[test_ind, 0]]
@@ -129,11 +130,15 @@ def calc_filtered_signal(w: np.ndarray, sig: np.ndarray) -> np.ndarray:
 
 
 def main():
-    filename = f'performance_prop_relax.csv'
+    filename_relax = f'performance_prop_relax.csv'
+    filename_exact = f'performance_prop_exact.csv'
+    filename_relax_init = f'performance_prop_relax_init.csv'
+
     # We concatenate the files to 10s audio files and printing the waveform and the STFT
     target_interference = load_target_and_interference_signals()
-    num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4, 5 * (10 ** 4), 10 ** 5]
-    for param_ind in range(1, len(WIN_LENGTH_LIST)-1):
+    num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4,
+                 2 * (10 ** 4), 3 * (10 ** 4), 4 * (10 ** 4), 5 * (10 ** 4), 10 ** 5]
+    for param_ind in range(1, len(WIN_LENGTH_LIST) - 1):
         cur_win_length, cur_nfft, cur_hop_length = (WIN_LENGTH_LIST[param_ind], N_FFT_LIST[param_ind],
                                                     HOP_LENGTH_LIST[param_ind])
         print(f'{cur_win_length}||{cur_nfft}||{cur_hop_length}')
@@ -141,7 +146,6 @@ def main():
             for test_ind in range(len(target_interference)):
                 source_signal = target_interference[test_ind][0]
                 interference_signal = target_interference[test_ind][1]
-                # display_time_frequency_signal()
 
                 # Create sampled data
                 t_60 = np.random.uniform(T_60_RANGE[0], T_60_RANGE[1])
@@ -149,12 +153,8 @@ def main():
                 h_source = create_room_impulse_response(
                     ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION, plot_rir=False)
                 x_t_clean = ss.convolve(h_source, source_signal[:, None])
-                # display_audio_time_domain(x_t_clean[:, REF_MIC_INDEX], FS, title='clean target signal - Reference Mic')
 
                 x_t = add_noise(interference_signal, t_60, x_t_clean)
-                # save_audio_signals(FS, x_t_clean, f'clean_signal_{test_ind}.wav')
-                # save_audio_signals(FS, x_t, f'noisy_signal_{test_ind}.wav')
-
                 a_f = compute_rtf_target(x_t_clean, FS, win_length=cur_win_length, hop_length=cur_hop_length,
                                          n_fft=cur_nfft)
 
@@ -163,25 +163,44 @@ def main():
                 print(f">>> lmbda: {lmbda}")
                 rho = 0.005
                 print(f">>> rho: {rho}")
-                score_pesq, score_estoi, score_si_sdr, score_dr = run_prop_relax(
-                    a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean, k_iters)
-
-                cur_stat = pd.DataFrame({
-                    'param_ind': [param_ind],
-                    'cur_win_length': [cur_win_length],
-                    'cur_nfft': [cur_nfft],
-                    'cur_hop_length': [cur_hop_length],
-                    'k_iters': [k_iters],
-                    'test_ind': [test_ind],
-                    'score_pesq': [score_pesq],
-                    'score_estoi': [score_estoi],
-                    'score_si_sdr': [score_si_sdr],
-                    'score_dr': [score_dr]
-
-                })
-                file_exists = os.path.exists(filename)
-                cur_stat.to_csv(filename, mode="a", header=not file_exists, index=False)
+                run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_relax, k_iters, lmbda, param_ind,
+                             rho, test_ind, x_t, x_t_clean, alg_type='prop-relax')
+                run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_exact, k_iters, lmbda, param_ind,
+                             rho, test_ind, x_t, x_t_clean, alg_type='prop-exact')
+                run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_relax_init, k_iters, lmbda,
+                             param_ind, rho, test_ind, x_t, x_t_clean, alg_type='prop-relax-init')
                 # run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x_t)
+
+
+def run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename, k_iters, lmbda, param_ind, rho,
+                 test_ind, x_t, x_t_clean, alg_type: str = 'prop-relax'):
+    if alg_type == 'prop-relax':
+        score_pesq, score_estoi, score_si_sdr, score_dr = run_prop_relax(
+            a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean, k_iters)
+    elif alg_type == 'prop-exact':
+        score_pesq, score_estoi, score_si_sdr, score_dr = run_prop_exact(
+            a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean, k_iters)
+    elif alg_type == 'prop-relax-init':
+        score_pesq, score_estoi, score_si_sdr, score_dr = run_prop_relax_with_initialization(
+            a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean, k_iters)
+    else:
+        return pd.DataFrame({})
+    cur_stat = pd.DataFrame({
+        'param_ind': [param_ind],
+        'cur_win_length': [cur_win_length],
+        'cur_nfft': [cur_nfft],
+        'cur_hop_length': [cur_hop_length],
+        'k_iters': [k_iters],
+        'test_ind': [test_ind],
+        'score_pesq': [score_pesq],
+        'score_estoi': [score_estoi],
+        'score_si_sdr': [score_si_sdr],
+        'score_dr': [score_dr]
+
+    })
+    file_exists = os.path.exists(filename)
+    cur_stat.to_csv(filename, mode="a", header=not file_exists, index=False)
+    return cur_stat
 
 
 def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x_t):
@@ -204,19 +223,18 @@ def add_noise(interference_signal, t_60, x_t_clean):
     return x_t
 
 
-def display_time_frequency_signal():
-    pass
-    # display_audio_time_domain(source_signal, FS,
-    #                           title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}')
-    # display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
-    #                           hop_length=cur_hop_length,
-    #                           title=f'original signal, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}',
-    #                           n_fft=cur_nfft)
-    # plt.show()
+def display_time_frequency_signal(source_signal, cur_hop_length, cur_nfft, cur_win_length, title: str):
+    display_audio_time_domain(source_signal, FS,
+                              title=f'{title}, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}')
+    display_audio_spectrogram(source_signal, FS, win_length=cur_win_length,
+                              hop_length=cur_hop_length,
+                              title=f'{title}, r={cur_hop_length}, F={cur_nfft}, N={cur_win_length}',
+                              n_fft=cur_nfft)
+    plt.show()
 
 
 def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean,
-                   k_iters: int = 10 ** 3, plot_fig5: bool=False):
+                   k_iters: int = 10 ** 3, plot_fig5: bool = False):
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
     v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
@@ -237,22 +255,28 @@ def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, te
 
         fig6 = create_fig6(z_f)
         fig6.show()
-        # fig5 = create_fig5(x_t_clean[:, 1], y_out)
-        # fig5.show()
-        # fig5 = create_fig5(x_t_clean[:, 2], y_out)
-        # fig5.show()
-        # fig5 = create_fig5(x_t_clean[:, 3], y_out)
-        # fig5.show()
+
+        save_audio_signals(FS, x_t_clean, f'prop_relax_xt_clean_{test_ind}.wav')
+        save_audio_signals(FS, x_t, f'prop_relax_xt_{test_ind}.wav')
+        save_audio_signals(FS, y_out, f'prop_relax_out_{test_ind}.wav')
+        display_time_frequency_signal(y_out, cur_hop_length, cur_nfft, cur_win_length,
+                                      title='Estimated Signal, Prop-Relax')
+
     # save_audio_signals(FS, y_out, f'prop_relax_out_signal_{test_ind}.wav')
     return score_pesq, score_estoi, score_si_sdr, score_dr
 
 
-def run_prop_exact(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean,
-                   k_iters: int = 10 ** 3):
+def run_prop_relax_with_initialization(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t,
+                                       x_t_clean, k_iters: int = 10 ** 3, plot_fig5: bool = False):
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
+
     v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-    w_f_prop_relax, w_f_time_freq, z_f = prop_exact(
+    v_init[:n_mics, :] = initialize_with_steering_vec(
+        FS, x_t_clean,
+        win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
+
+    w_f_prop_relax, w_f_time_freq, z_f = prop_relax(
         x_t, a_f, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft,
         v=v_init, rho=rho, lmbda=lmbda, K=k_iters)
     y_out = calc_filtered_signal(w_f_prop_relax, x_t)
@@ -263,19 +287,52 @@ def run_prop_exact(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, te
     score_si_sdr = evaluate_si_sdr_score(x_t_clean[:, REF_MIC_INDEX], y_out)
     score_dr = evaluate_distortion_ratio(F, a_f, w_f_time_freq)
 
-    # save_audio_signals(FS, y_out, f'prop_exact_out_signal_{test_ind}.wav')
+    if plot_fig5:
+        fig5 = create_fig5(x_t_clean[:, REF_MIC_INDEX], y_out)
+        fig5.show()
+
+        fig6 = create_fig6(z_f)
+        fig6.show()
+
+        save_audio_signals(FS, x_t_clean, f'prop_relax_init_xt_clean_{test_ind}.wav')
+        save_audio_signals(FS, x_t, f'prop_relax_init_xt_{test_ind}.wav')
+        save_audio_signals(FS, y_out, f'prop_relax_init_out_{test_ind}.wav')
+        display_time_frequency_signal(y_out, cur_hop_length, cur_nfft, cur_win_length,
+                                      title='Estimated Signal, Prop-Relax with Initialization')
     return score_pesq, score_estoi, score_si_sdr, score_dr
 
-    # L, n_mics = x_t.shape
-    # y_out = np.zeros(L, dtype=np.complex128)
-    # n_range = np.arange(-F // 2, F // 2)
-    # w_inds = np.where(n_range >= 0, n_range, n_range + F)
-    # x_inds = np.arange(L)[:, None] - n_range
-    # x_t_padded = np.zeros((L + 2 * F, n_mics), dtype=np.complex128)
-    # x_t_padded[F:L + F, :] = x_t
-    # x_inds_padded = x_inds + F
-    # for m in range(n_mics):
-    #     y_out += np.sum(w_f_prop_relax[m, w_inds] * x_t_padded[x_inds_padded, m], axis=1)
+
+def run_prop_exact(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean,
+                   k_iters: int = 10 ** 3, plot_fig5: bool = False):
+    n_freq_bins, n_mics = a_f.shape
+    F = 2 * (n_freq_bins - 1)
+    v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
+    w_f_prop_exact, w_f_time_freq, z_f = prop_exact(
+        x_t, a_f, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft,
+        v=v_init, rho=rho, lmbda=lmbda, K=k_iters)
+    y_out = calc_filtered_signal(w_f_prop_exact, x_t)
+    y_out = np.concatenate([np.zeros(F // 2 - 1), y_out[:-F // 2 + 1].real])
+
+    score_pesq = evaluate_pesq_score(FS, x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_estoi = evaluate_estoi_score(FS, x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_si_sdr = evaluate_si_sdr_score(x_t_clean[:, REF_MIC_INDEX], y_out)
+    score_dr = evaluate_distortion_ratio(F, a_f, w_f_time_freq)
+
+    if plot_fig5:
+        fig5 = create_fig5(x_t_clean[:, REF_MIC_INDEX], y_out)
+        fig5.show()
+
+        fig6 = create_fig6(z_f)
+        fig6.show()
+        display_time_frequency_signal(y_out, cur_hop_length, cur_nfft, cur_win_length,
+                                      title='Estimated Signal, Prop-Exact')
+
+        save_audio_signals(FS, x_t_clean, f'prop_exact_xt_clean_{test_ind}.wav')
+        save_audio_signals(FS, x_t, f'prop_exact_xt_{test_ind}.wav')
+        save_audio_signals(FS, y_out, f'prop_exact_out_{test_ind}.wav')
+
+    # save_audio_signals(FS, y_out, f'prop_exact_out_signal_{test_ind}.wav')
+    return score_pesq, score_estoi, score_si_sdr, score_dr
 
 
 def load_target_and_interference_signals():

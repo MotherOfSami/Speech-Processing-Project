@@ -6,33 +6,45 @@ import plotly.graph_objects as go
 
 
 def create_fig4():
-    data = pd.read_csv(r"/Users/ronicaduri/PycharmProjects/audioSignals/PROJECT/performance_prop_relax.csv")
+    data_prop_relax = pd.read_csv(r"/Users/ronicaduri/PycharmProjects/audioSignals/PROJECT/performance_prop_relax.csv")
+    data_prop_exact = pd.read_csv(r"/Users/ronicaduri/PycharmProjects/audioSignals/PROJECT/performance_prop_exact.csv")
+    data_prop_relax_init = pd.read_csv(
+        r"/Users/ronicaduri/PycharmProjects/audioSignals/PROJECT/performance_prop_relax_init.csv")
+    alg_types = {
+        'prop-relax': data_prop_relax, 'prop-exact': data_prop_exact, 'prop-relax-init': data_prop_relax_init
+    }
+
     score_types = ['score_si_sdr', 'score_pesq', 'score_estoi', 'score_dr']
     n_fft_opts = [2048, 4096, 8192, 16384]
-    alg_types = ['prop-relax', 'prop-exact']
-    fig = make_subplots(rows=4, cols=4, shared_yaxes=True, shared_xaxes=True)
+    fig = make_subplots(rows=4, cols=4, shared_yaxes=True, shared_xaxes=True,
+                        subplot_titles=("# of DFT points: 2048", "# of DFT points: 4096",
+                                        "# of DFT points: 8192", "# of DFT points: 16384"))
     n_colors = 10
     colors = px.colors.sample_colorscale("turbo", [n / (n_colors - 1) if n_colors != 1 else 0 for n in range(n_colors)])
 
     for cur_fft_ind in range(len(n_fft_opts)):
         cur_fft = n_fft_opts[cur_fft_ind]
-        cur_data = data.loc[data['cur_nfft'] == cur_fft, :].copy()
 
-        for cur_score_ind in range(len(score_types)):
-            if cur_fft_ind == 0 and cur_score_ind == 0:
-                show_legend = True
-            else:
-                show_legend = False
-            cur_score = score_types[cur_score_ind]
-            cur_stat = cur_data.groupby('k_iters')[cur_score].mean().reset_index()
-            fig.add_trace(go.Scatter(x=cur_stat['k_iters'], y=cur_stat[cur_score],
-                                     name='prop-relax', marker_color=colors[2],
-                                     showlegend=show_legend),
-                          row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
-            # fig.add_trace(go.Scatter(x=cur_stat['k_iters'], y=cur_stat[cur_score],
-            #                          name='prop-exact', marker_color=colors[-2],
-            #                          showlegend=showlegend),
-            #               row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
+        alg_ind = 0
+        for alg_name, alg_data in alg_types.items():
+            alg_ind = alg_ind + 1
+            cur_data = alg_data.loc[alg_data['cur_nfft'] == cur_fft, :].copy()
+
+            for cur_score_ind in range(len(score_types)):
+                if cur_fft_ind == 1 and cur_score_ind == 1:
+                    show_legend = True
+                else:
+                    show_legend = False
+                cur_score = score_types[cur_score_ind]
+                cur_stat = cur_data.groupby('k_iters')[cur_score].mean().reset_index()
+                fig.add_trace(go.Scatter(x=cur_stat['k_iters'], y=cur_stat[cur_score],
+                                         name=alg_name, marker_color=colors[3*alg_ind],
+                                         showlegend=show_legend),
+                              row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
+                # fig.add_trace(go.Scatter(x=cur_stat['k_iters'], y=cur_stat[cur_score],
+                #                          name='prop-exact', marker_color=colors[-2],
+                #                          showlegend=showlegend),
+                #               row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
     fig.update_yaxes(title_text="SI-SDR [dB]", row=1, col=1)
     fig.update_yaxes(title_text="PESQ", row=2, col=1)
     fig.update_yaxes(title_text="ESTOI", row=3, col=1)
