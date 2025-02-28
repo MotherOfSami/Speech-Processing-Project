@@ -41,20 +41,12 @@ def create_fig4():
                                          name=alg_name, marker_color=colors[3*alg_ind],
                                          showlegend=show_legend),
                               row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
-                # fig.add_trace(go.Scatter(x=cur_stat['k_iters'], y=cur_stat[cur_score],
-                #                          name='prop-exact', marker_color=colors[-2],
-                #                          showlegend=showlegend),
-                #               row=(cur_score_ind + 1), col=(cur_fft_ind + 1), )
+
     fig.update_yaxes(title_text="SI-SDR [dB]", row=1, col=1)
     fig.update_yaxes(title_text="PESQ", row=2, col=1)
     fig.update_yaxes(title_text="ESTOI", row=3, col=1)
     fig.update_yaxes(title_text="DR [dB]", row=4, col=1)
-    fig.update_xaxes(title_text="# of iterations", row=4, col=1)
-    fig.update_xaxes(title_text="# of iterations", row=4, col=2)
-    fig.update_xaxes(title_text="# of iterations", row=4, col=3)
-    fig.update_xaxes(title_text="# of iterations", row=4, col=4)
-
-    # fig.update_layout(title_text='Primary Title')
+    fig.update_xaxes(title_text="# of iterations", type="log")
 
     return fig
 
