@@ -250,6 +250,19 @@ def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x
     return y_t
 
 
+def add_moving_noise(interference_signal, t_60, x_t_clean, radius, theta_start, theta_end, n_positions):
+    theta_vec = np.linspace(theta_start, theta_end, n_positions)
+    noise_x = CENTER[0] + radius * np.cos(theta_vec)
+    noise_y = CENTER[1] + radius * np.sin(theta_vec)
+    noise_z = CENTER[2]
+
+    rir_list = []
+    for pos_idx in range(n_positions):
+        rir = generate_rir(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, [noise_x, noise_y, noise_z])
+        rir_list.append(rir)
+    np.stack(rir_list)
+
+
 def add_noise(interference_signal, t_60, x_t_clean):
     h_interference = create_room_impulse_response(
         ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, INTERFERENCE_POSITION, plot_rir=False)
