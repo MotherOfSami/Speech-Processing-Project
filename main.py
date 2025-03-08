@@ -10,7 +10,7 @@ from scipy.linalg import eigh
 import soundfile as sf
 import glob
 from scores_utils import evaluate_pesq_score, evaluate_estoi_score, evaluate_si_sdr_score, evaluate_distortion_ratio
-from prop_algs import prop_relax, prop_exact
+from prop_algs import prop_relax, prop_exact, prop_relax_online
 from figs_creation import create_fig5, create_fig6
 from scipy.signal import convolve
 from localization_utils import initialize_with_steering_vec
@@ -129,13 +129,11 @@ def calc_filtered_signal(w: np.ndarray, sig: np.ndarray) -> np.ndarray:
     return res
 
 
-def main():
+def test_prop_relax(target_interference):
     filename_relax = f'performance_prop_relax.csv'
     filename_exact = f'performance_prop_exact.csv'
     filename_relax_init = f'performance_prop_relax_init.csv'
 
-    # We concatenate the files to 10s audio files and printing the waveform and the STFT
-    target_interference = load_target_and_interference_signals()
     num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4,
                  2 * (10 ** 4), 3 * (10 ** 4)]
     for param_ind in range(2, len(WIN_LENGTH_LIST) - 1):
@@ -169,7 +167,39 @@ def main():
                              rho, test_ind, x_t, x_t_clean, alg_type='prop-exact')
                 run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_relax_init, k_iters, lmbda,
                              param_ind, rho, test_ind, x_t, x_t_clean, alg_type='prop-relax-init')
-                # run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x_t)
+
+
+def test_prop_relax_online(target_interference):
+    source_signal = target_interference[0][0][:int(WIN_LENGTH_LIST[2] * 10)]
+    interference_signal = target_interference[0][1][:int(WIN_LENGTH_LIST[2] * 10)]
+
+    # Create sampled data
+    t_60 = np.random.uniform(T_60_RANGE[0], T_60_RANGE[1])
+    print(f">>> Randomized T_60: {t_60}[s]")
+    h_source = create_room_impulse_response(
+        ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION, plot_rir=False)
+    x_t_clean = ss.convolve(h_source, source_signal[:, None])
+
+    save_audio_signals(16000, x_t_clean, "clean_signal.wav")
+
+    x_t = add_noise(interference_signal, t_60, x_t_clean)
+
+    save_audio_signals(16000, x_t, "noisy_signal.wav")
+
+    a_f = compute_rtf_target(x_t_clean, FS, win_length=WIN_LENGTH_LIST[2], hop_length=HOP_LENGTH_LIST[2],
+                             n_fft=N_FFT_LIST[2])
+    lmbda = 1.8
+    rho = 0.005
+
+    y_t = run_prop_online(a_f, HOP_LENGTH_LIST[2], N_FFT_LIST[2], WIN_LENGTH_LIST[2], lmbda, rho, x_t)
+    return y_t
+
+
+def main():
+    # We concatenate the files to 10s audio files and printing the waveform and the STFT
+    target_interference = load_target_and_interference_signals()
+
+    test_prop_relax_online(target_interference)
 
 
 def run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename, k_iters, lmbda, param_ind, rho,
@@ -207,12 +237,17 @@ def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
     v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-    w_f_prop_relax = prop_relax_online(x_t, a_f, FS,
-                                       win_length=cur_win_length,
-                                       hop_length=cur_hop_length,
-                                       n_fft=cur_nfft,
-                                       v=v_init, rho=rho, lmbda=lmbda, beta=0.7)
-    y_out = calc_filtered_signal(w_f_prop_relax, x_t)
+    y_f_t_prop_relax = prop_relax_online(x_t, a_f, FS,
+                                         win_length=cur_win_length,
+                                         hop_length=cur_hop_length,
+                                         n_fft=cur_nfft,
+                                         v=v_init, rho=rho, lmbda=lmbda, beta=0.7)
+    y_t = librosa.istft(y_f_t_prop_relax,
+                        win_length=cur_win_length,
+                        hop_length=cur_hop_length,
+                        n_fft=cur_nfft)
+
+    return y_t
 
 
 def add_noise(interference_signal, t_60, x_t_clean):

@@ -275,4 +275,4 @@ def prop_relax_online(x_t, a_f,
         full_x_n_f = reconstruct_full_spectrum(x_n_f[m, :])
         y_n_f += v_t_causal[:, m, :].conj() * full_x_n_f
 
-    return w_f
+    return y_n_f
