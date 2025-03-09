@@ -1,0 +1,2 @@
+param_ind,cur_win_length,cur_nfft,cur_hop_length,k_iters,test_ind,score_pesq,score_estoi,score_si_sdr,score_dr
+2,4096,8192,2048,10,0,1.281337857246399,0.7407257542094833,-3.101035523242572,11.230768266122888
