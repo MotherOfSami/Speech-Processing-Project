@@ -1,5 +1,8 @@
 import os.path
 import librosa
+import numpy as np
+
+
 import rir_generator as rir
 import matplotlib.pyplot as plt
 import scipy.signal as ss
@@ -14,7 +17,7 @@ from prop_algs import prop_relax, prop_exact, prop_relax_online
 from figs_creation import create_fig5, create_fig6
 from scipy.signal import convolve
 from localization_utils import initialize_with_steering_vec
-
+from tqdm import tqdm
 
 def apply_stft(y, sr, win_length, hop_length, n_fft=None):
     # calculate stft params
@@ -169,7 +172,7 @@ def test_prop_relax(target_interference):
                              param_ind, rho, test_ind, x_t, x_t_clean, alg_type='prop-relax-init')
 
 
-def test_prop_relax_online(target_interference):
+def test_prop_relax_online_stationary(target_interference):
     source_signal = target_interference[0][0][:int(WIN_LENGTH_LIST[2] * 10)]
     interference_signal = target_interference[0][1][:int(WIN_LENGTH_LIST[2] * 10)]
 
@@ -195,11 +198,40 @@ def test_prop_relax_online(target_interference):
     return y_t
 
 
+def test_prop_relax_online_moving(target_interference):
+    source_signal = target_interference[0][0]
+    interference_signal = target_interference[0][1]
+
+    t_60 = 0.25
+    h_source = create_room_impulse_response(
+        ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION, plot_rir=False)
+    x_t_clean = ss.convolve(h_source, source_signal[:, None])
+    save_audio_signals(FS, x_t_clean[:, 0], 'clean_signal.wav')
+    moving_rir = generate_moving_rir(t_60, radius=0.25, theta_start=0*np.pi/180, theta_end=180*np.pi/180,n_positions= NUM_OF_MOVING_NOISE_POSITIONS)
+    # moving_rir = np.load('moving_rir.npy')
+
+    moving_noise = generate_moving_noise(interference_signal, moving_rir)
+    save_audio_signals(FS, moving_noise[:, [0, 3]], 'moving_noise.wav')
+
+
+def generate_moving_noise(noise, moving_rir, num_of_noise_positions=NUM_OF_MOVING_NOISE_POSITIONS):
+    noise_split = np.array_split(noise, num_of_noise_positions)
+    noise_signal_list = []
+    for pos_idx in range(NUM_OF_MOVING_NOISE_POSITIONS):
+        n_t = ss.convolve(noise_split[pos_idx][:, None], moving_rir[pos_idx, :])
+        n_t = n_t[:len(noise_split[pos_idx]) - 1, :]
+        noise_signal_list.append(n_t)
+
+    noise_signal = np.concat(noise_signal_list, axis=0)
+    return noise_signal
+
+
 def main():
     # We concatenate the files to 10s audio files and printing the waveform and the STFT
+
     target_interference = load_target_and_interference_signals()
 
-    test_prop_relax_online(target_interference)
+    test_prop_relax_online_moving(target_interference)
 
 
 def run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename, k_iters, lmbda, param_ind, rho,
@@ -250,17 +282,20 @@ def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x
     return y_t
 
 
-def add_moving_noise(interference_signal, t_60, x_t_clean, radius, theta_start, theta_end, n_positions):
+def generate_moving_rir(t_60, radius, theta_start, theta_end, n_positions):
     theta_vec = np.linspace(theta_start, theta_end, n_positions)
     noise_x = CENTER[0] + radius * np.cos(theta_vec)
     noise_y = CENTER[1] + radius * np.sin(theta_vec)
     noise_z = CENTER[2]
 
     rir_list = []
-    for pos_idx in range(n_positions):
-        rir = generate_rir(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, [noise_x, noise_y, noise_z])
+    for pos_idx in tqdm(range(n_positions)):
+        rir = generate_rir(ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, [noise_x[pos_idx], noise_y[pos_idx], noise_z])
         rir_list.append(rir)
-    np.stack(rir_list)
+    stacked_rir = np.stack(rir_list)
+
+    # np.save("moving_rir",stacked_rir)
+    return stacked_rir
 
 
 def add_noise(interference_signal, t_60, x_t_clean):
