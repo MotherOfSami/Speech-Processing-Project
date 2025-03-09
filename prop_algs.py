@@ -182,9 +182,10 @@ def prop_relax(x_t, a_f,
 
     # precompute KKT inverse
     kkt_inv, _ = compute_kkt_inverse_in_advance(a_f, n_freq_bins, n_mics, n_time_frames, rho, x_n_f)
-
+    v_convergence_list = []
     for k in range(K):
-        if k % 1000 == 0:
+        prev_v = v.copy()
+        if k % 10 == 0:
             print(k)
         # apply the proximity operator for L1 constrain (sparsity) to each frequency bin
         for m in range(n_mics):
@@ -203,7 +204,11 @@ def prop_relax(x_t, a_f,
 
             # update the beam-forming weight matrix
             v[:, f] = v[:, f] + lmbda * (y_k_1 - zeta_k_1[:, f])
+
+        dist_from_prev_v = np.linalg.norm(np.mean(v[0:4, :] - prev_v[0:4, :], axis=0))
+        v_convergence_list.append(dist_from_prev_v)
     # w_f, z_f = v[:n_mics, :], v[n_mics, :]
+    v_convergence = np.array(v_convergence_list)
     res = []
     for m in range(n_mics):
         cur_theta = prox_spatial_filter_complex(v[m, :], delta)
@@ -216,7 +221,7 @@ def prop_relax(x_t, a_f,
     z_f = np.zeros_like(v[n_mics, :], dtype='float64')
     for f in range(n_fft):
         z_f[f] = prox_gain_parameter_real(v[n_mics, f])
-    return w_f, w_f_time_freq, z_f
+    return w_f, w_f_time_freq, z_f, v_convergence
 
 
 def prop_relax_online(x_t, a_f,

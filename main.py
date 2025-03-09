@@ -137,8 +137,9 @@ def test_prop_relax(target_interference):
     filename_exact = f'performance_prop_exact.csv'
     filename_relax_init = f'performance_prop_relax_init.csv'
 
-    num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4,
-                 2 * (10 ** 4), 3 * (10 ** 4)]
+    # num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4,
+    #              2 * (10 ** 4), 3 * (10 ** 4)]
+    num_iters = [20]
     for param_ind in range(2, len(WIN_LENGTH_LIST) - 1):
         cur_win_length, cur_nfft, cur_hop_length = (WIN_LENGTH_LIST[param_ind], N_FFT_LIST[param_ind],
                                                     HOP_LENGTH_LIST[param_ind])
@@ -166,10 +167,11 @@ def test_prop_relax(target_interference):
                 print(f">>> rho: {rho}")
                 run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_relax, k_iters, lmbda, param_ind,
                              rho, test_ind, x_t, x_t_clean, alg_type='prop-relax')
-                run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_exact, k_iters, lmbda, param_ind,
-                             rho, test_ind, x_t, x_t_clean, alg_type='prop-exact')
+                # run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_exact, k_iters, lmbda, param_ind,
+                #              rho, test_ind, x_t, x_t_clean, alg_type='prop-exact')
                 run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename_relax_init, k_iters, lmbda,
                              param_ind, rho, test_ind, x_t, x_t_clean, alg_type='prop-relax-init')
+                plt.show()
 
 
 def test_prop_relax_online_stationary(target_interference):
@@ -201,11 +203,13 @@ def test_prop_relax_online_stationary(target_interference):
 def test_prop_relax_online_moving(target_interference):
     source_signal = target_interference[0][0]
     interference_signal = target_interference[0][1]
-
+    lmbda = 1.8
+    rho = 0.005
     t_60 = 0.25
     h_source = create_room_impulse_response(
         ROOM_DIMENSIONS, MIC_POSITIONS, FS, t_60, SOURCE_POSITION, plot_rir=False)
     x_t_clean = ss.convolve(h_source, source_signal[:, None])
+    x_t_clean = x_t_clean[:len(source_signal)]
     save_audio_signals(FS, x_t_clean[:, 0], 'clean_signal.wav')
     moving_rir = generate_moving_rir(t_60, radius=0.25, theta_start=0*np.pi/180, theta_end=180*np.pi/180,n_positions= NUM_OF_MOVING_NOISE_POSITIONS)
     # moving_rir = np.load('moving_rir.npy')
@@ -213,25 +217,31 @@ def test_prop_relax_online_moving(target_interference):
     moving_noise = generate_moving_noise(interference_signal, moving_rir)
     save_audio_signals(FS, moving_noise[:, [0, 3]], 'moving_noise.wav')
 
+    x_t = moving_noise + x_t_clean
+
+    save_audio_signals(FS, x_t[:, [0, 3]], 'noisy_signal.wav')
+
+
+    a_f = compute_rtf_target(x_t_clean, FS, win_length=WIN_LENGTH_LIST[2], hop_length=HOP_LENGTH_LIST[2],
+                             n_fft=N_FFT_LIST[2])
+
+    run_prop_relax(a_f, HOP_LENGTH_LIST[2], N_FFT_LIST[2], WIN_LENGTH_LIST[2], lmbda, rho, 0, x_t, x_t_clean)
+    y_t = run_prop_online(a_f, HOP_LENGTH_LIST[2], N_FFT_LIST[2], WIN_LENGTH_LIST[2], lmbda, rho, x_t)
+
+    save_audio_signals(FS, y_t, f'prop_relax_online_out_signal_{0}.wav')
 
 def generate_moving_noise(noise, moving_rir, num_of_noise_positions=NUM_OF_MOVING_NOISE_POSITIONS):
     noise_split = np.array_split(noise, num_of_noise_positions)
     noise_signal_list = []
     for pos_idx in range(NUM_OF_MOVING_NOISE_POSITIONS):
         n_t = ss.convolve(noise_split[pos_idx][:, None], moving_rir[pos_idx, :])
-        n_t = n_t[:len(noise_split[pos_idx]) - 1, :]
+        n_t = n_t[:len(noise_split[pos_idx]), :]
         noise_signal_list.append(n_t)
 
     noise_signal = np.concat(noise_signal_list, axis=0)
     return noise_signal
 
 
-def main():
-    # We concatenate the files to 10s audio files and printing the waveform and the STFT
-
-    target_interference = load_target_and_interference_signals()
-
-    test_prop_relax_online_moving(target_interference)
 
 
 def run_save_alg(a_f, cur_hop_length, cur_nfft, cur_win_length, filename, k_iters, lmbda, param_ind, rho,
@@ -273,11 +283,13 @@ def run_prop_online(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, x
                                          win_length=cur_win_length,
                                          hop_length=cur_hop_length,
                                          n_fft=cur_nfft,
-                                         v=v_init, rho=rho, lmbda=lmbda, beta=0.7)
+                                         v=v_init, rho=rho, lmbda=lmbda, beta=0.9)
     y_t = librosa.istft(y_f_t_prop_relax,
                         win_length=cur_win_length,
                         hop_length=cur_hop_length,
                         n_fft=cur_nfft)
+
+
 
     return y_t
 
@@ -317,11 +329,11 @@ def display_time_frequency_signal(source_signal, cur_hop_length, cur_nfft, cur_w
 
 
 def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t, x_t_clean,
-                   k_iters: int = 10 ** 3, plot_fig5: bool = False):
+                   k_iters: int = 10 ** 3, plot_fig5: bool = False, plot_conv: bool = True):
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
     v_init = np.zeros((n_mics + 1, F), dtype=np.complex128)
-    w_f_prop_relax, w_f_time_freq, z_f = prop_relax(
+    w_f_prop_relax, w_f_time_freq, z_f, v_convergence = prop_relax(
         x_t, a_f, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft,
         v=v_init, rho=rho, lmbda=lmbda, K=k_iters)
     y_out = calc_filtered_signal(w_f_prop_relax, x_t)
@@ -345,12 +357,19 @@ def run_prop_relax(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, te
         display_time_frequency_signal(y_out, cur_hop_length, cur_nfft, cur_win_length,
                                       title='Estimated Signal, Prop-Relax')
 
-    # save_audio_signals(FS, y_out, f'prop_relax_out_signal_{test_ind}.wav')
+    if plot_conv:
+        plt.figure()
+        plt.plot(v_convergence)
+        plt.title("Convergence of weights")
+        plt.xlabel("Iteration")
+        plt.ylabel("Convergence")
+
+    save_audio_signals(FS, y_out, f'prop_relax_out_signal_{test_ind}.wav')
     return score_pesq, score_estoi, score_si_sdr, score_dr
 
 
 def run_prop_relax_with_initialization(a_f, cur_hop_length, cur_nfft, cur_win_length, lmbda, rho, test_ind, x_t,
-                                       x_t_clean, k_iters: int = 10 ** 3, plot_fig5: bool = False):
+                                       x_t_clean, k_iters: int = 10 ** 3, plot_fig5: bool = False, plot_conv: bool = True):
     n_freq_bins, n_mics = a_f.shape
     F = 2 * (n_freq_bins - 1)
 
@@ -359,7 +378,7 @@ def run_prop_relax_with_initialization(a_f, cur_hop_length, cur_nfft, cur_win_le
         FS, x_t_clean,
         win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft)
 
-    w_f_prop_relax, w_f_time_freq, z_f = prop_relax(
+    w_f_prop_relax, w_f_time_freq, z_f, v_convergence = prop_relax(
         x_t, a_f, FS, win_length=cur_win_length, hop_length=cur_hop_length, n_fft=cur_nfft,
         v=v_init, rho=rho, lmbda=lmbda, K=k_iters)
     y_out = calc_filtered_signal(w_f_prop_relax, x_t)
@@ -382,6 +401,13 @@ def run_prop_relax_with_initialization(a_f, cur_hop_length, cur_nfft, cur_win_le
         save_audio_signals(FS, y_out, f'prop_relax_init_out_{test_ind}.wav')
         display_time_frequency_signal(y_out, cur_hop_length, cur_nfft, cur_win_length,
                                       title='Estimated Signal, Prop-Relax with Initialization')
+
+    if plot_conv:
+        plt.figure()
+        plt.plot(v_convergence)
+        plt.title("Convergence of weights for smart init")
+        plt.xlabel("Iteration")
+        plt.ylabel("Convergence")
     return score_pesq, score_estoi, score_si_sdr, score_dr
 
 
@@ -424,6 +450,15 @@ def load_target_and_interference_signals():
     combined_speakers = [[source_signal[i], interference_signal[i]] for i in range(len(source_signal))]
     return combined_speakers
 
+
+
+def main():
+    # We concatenate the files to 10s audio files and printing the waveform and the STFT
+
+    target_interference = load_target_and_interference_signals()
+
+    test_prop_relax_online_moving(target_interference)
+    # אtest_prop_relax(target_interference
 
 if __name__ == '__main__':
     main()
