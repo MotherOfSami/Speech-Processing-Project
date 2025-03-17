@@ -139,7 +139,7 @@ def test_prop_relax(target_interference):
 
     # num_iters = [10, 50, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 10 ** 4,
     #              2 * (10 ** 4), 3 * (10 ** 4)]
-    num_iters = [20]
+    num_iters = [5000]
     for param_ind in range(2, len(WIN_LENGTH_LIST) - 1):
         cur_win_length, cur_nfft, cur_hop_length = (WIN_LENGTH_LIST[param_ind], N_FFT_LIST[param_ind],
                                                     HOP_LENGTH_LIST[param_ind])
@@ -456,9 +456,7 @@ def main():
     # We concatenate the files to 10s audio files and printing the waveform and the STFT
 
     target_interference = load_target_and_interference_signals()
-
-    test_prop_relax_online_moving(target_interference)
-    # אtest_prop_relax(target_interference
+    test_prop_relax(target_interference)
 
 if __name__ == '__main__':
     main()
